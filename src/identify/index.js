@@ -84,9 +84,6 @@ class IdentifyService {
     this._protocols = protocols
 
     this.handleMessage = this.handleMessage.bind(this)
-
-    // TODO: this should be stored in the certified AddressBook in follow up PR
-    this._selfRecord = undefined
   }
 
   /**
@@ -204,19 +201,13 @@ class IdentifyService {
       throw errCode(new Error(messages.ERR_INVALID_ENVELOPE), codes.ERR_INVALID_ENVELOPE)
     }
 
-    // Decode peer record
-    let peerRecord
-    try {
-      peerRecord = await PeerRecord.createFromProtobuf(envelope.payload)
-    } catch (err) {
+    const consumed = this.peerStore.addressBook.consumePeerRecord(envelope)
+    if (!consumed) {
       log('received invalid peer record, discard it')
       throw errCode(new Error(messages.ERR_INVALID_PEER_RECORD), codes.ERR_INVALID_PEER_RECORD)
     }
 
-    // TODO: Store as certified record
-
-    // Update peers data in PeerStore
-    this.peerStore.addressBook.set(id, peerRecord.multiaddrs.map((addr) => multiaddr(addr)))
+    // Update peer's protocols in PeerStore
     this.peerStore.protoBook.set(id, protocols)
 
     // TODO: Track our observed address so that we can score it
@@ -328,22 +319,10 @@ class IdentifyService {
       throw errCode(new Error(messages.ERR_INVALID_ENVELOPE), codes.ERR_INVALID_ENVELOPE)
     }
 
-    // Decode peer record
-    let peerRecord
-    try {
-      peerRecord = await PeerRecord.createFromProtobuf(envelope.payload)
-    } catch (err) {
+    const consumed = this.peerStore.addressBook.consumePeerRecord(envelope)
+    if (!consumed) {
       log('received invalid peer record, discard it')
       throw errCode(new Error(messages.ERR_INVALID_PEER_RECORD), codes.ERR_INVALID_PEER_RECORD)
-    }
-
-    // Update peers data in PeerStore
-    try {
-      // TODO: Store as certified record
-
-      this.peerStore.addressBook.set(id, peerRecord.multiaddrs.map((addr) => multiaddr(addr)))
-    } catch (err) {
-      return log.error('received invalid listen addrs', err)
     }
 
     // Update the protocols
@@ -355,9 +334,11 @@ class IdentifyService {
    * @return {Buffer}
    */
   async _getSelfPeerRecord () {
-    // TODO: Verify if updated
-    if (this._selfRecord) {
-      return this._selfRecord
+    const selfSignedPeerRecord = this.peerStore.addressBook.getRawEnvelope(this.peerId)
+
+    // TODO: Verify if updated when we support dynamic addresses changes
+    if (selfSignedPeerRecord) {
+      return selfSignedPeerRecord
     }
 
     const peerRecord = new PeerRecord({
@@ -365,10 +346,9 @@ class IdentifyService {
       multiaddrs: this._libp2p.multiaddrs
     })
     const envelope = await Envelope.seal(peerRecord, this.peerId)
+    this.peerStore.addressBook.consumePeerRecord(envelope)
 
-    this._selfRecord = envelope.marshal()
-
-    return this._selfRecord
+    return this.peerStore.addressBook.getRawEnvelope(this.peerId)
   }
 }
 
